@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maç Analiz Merkezi</title>
+<style>
+body{margin:0;background:#0b1220;color:#fff;font-family:Arial;padding:18px}
+h1{color:#36d99a;font-size:25px}
+button,select{padding:13px;border:0;border-radius:8px;margin:5px;background:#16865e;color:white;font-weight:bold}
+.card{background:#17243a;border:1px solid #30435f;border-radius:12px;padding:15px;margin:12px 0}
+.muted{color:#aabbd2;font-size:13px}
+.pred{color:#36d99a;font-weight:bold}
+</style>
+</head>
+<body>
+<h1>⚽ MAÇ ANALİZ MERKEZİ</h1>
+<p class="muted">Otomatik maç tarama ve analiz sistemi</p>
+
+<select id="gun">
+<option value="1">Bugün</option>
+<option value="3" selected>3 gün</option>
+<option value="7">7 gün</option>
+</select>
+<button onclick="tara()">MAÇLARI TARA</button>
+<p id="durum" class="muted">Hazır.</p>
+<div id="sonuc"></div>
+
+<script>
+const ligler=[
+["İngiltere Premier Lig","eng.1"],
+["İngiltere Championship","eng.2"],
+["İspanya LaLiga","esp.1"],
+["Almanya Bundesliga","ger.1"],
+["İtalya Serie A","ita.1"],
+["Fransa Ligue 1","fra.1"],
+["Türkiye Süper Lig","tur.1"],
+["Hollanda Eredivisie","ned.1"],
+["Portekiz Liga","por.1"],
+["Şampiyonlar Ligi","uefa.champions"],
+["Avrupa Ligi","uefa.europa"],
+["ABD MLS","usa.1"],
+["Brezilya Serie A","bra.1"],
+["Arjantin Liga","arg.1"]
+];
+
+async function tara(){
+ const buton=document.querySelector("button");
+ const sonuc=document.getElementById("sonuc");
+ const durum=document.getElementById("durum");
+ buton.disabled=true;
+ sonuc.innerHTML="";
+ durum.innerText="Ligler taranıyor...";
+ let maclar=[],hata=0;
+ const simdi=new Date();
+ const bitis=new Date(simdi.getTime()+Number(document.getElementById("gun").value)*86400000);
+
+ await Promise.all(ligler.map(async lig=>{
+  try{
+   const url="https://site.api.espn.com/apis/site/v2/sports/soccer/"+lig[1]+"/scoreboard?limit=100";
+   const cevap=await fetch(url);
+   if(!cevap.ok)throw Error("Veri alınamadı");
+   const veri=await cevap.json();
+
+   (veri.events||[]).forEach(m=>{
+    const takimlar=m.competitions?.[0]?.competitors||[];
+    const ev=takimlar.find(x=>x.homeAway==="home");
+    const dep=takimlar.find(x=>x.homeAway==="away");
+    if(!ev||!dep)return;
+    const tarih=new Date(m.date);
+    if(tarih>=simdi&&tarih<=bitis&&m.status?.type?.state!=="post"){
+     maclar.push({
+      lig:lig[0],
+      ev:ev.team.displayName,
+      dep:dep.team.displayName,
+      tarih:tarih
+     });
+    }
+   });
+  }catch(e){hata++}
+ }));
+
+ maclar.sort((a,b)=>a.tarih-b.tarih);
+
+ if(!maclar.length){
+  sonuc.innerHTML='<div class="card">Bu aralıkta maç bulunamadı veya veri kaynağına erişilemedi. Daha sonra tekrar dene.</div>';
+ }else{
+  maclar.forEach(m=>{
+   const kart=document.createElement("div");
+   kart.className="card";
+   const baslik=document.createElement("b");
+   baslik.textContent=m.ev+" - "+m.dep;
+   const lig=document.createElement("p");
+   lig.className="muted";
+   lig.textContent=m.lig;
+   const tarih=document.createElement("p");
+   tarih.className="muted";
+   tarih.textContent=m.tarih.toLocaleString("tr-TR");
+   const analiz=document.createElement("p");
+   analiz.className="pred";
+   analiz.textContent="Analiz için takım geçmişi ve güvenilir istatistik verisi bekleniyor.";
+   kart.append(baslik,lig,tarih,analiz);
+   sonuc.appendChild(kart);
+  });
+ }
+ durum.innerText=maclar.length+" maç bulundu. Veri alınamayan lig: "+hata;
+ buton.disabled=false;
+}
+</script>
+</body>
+</html>
