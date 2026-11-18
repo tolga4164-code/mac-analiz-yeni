@@ -1,0 +1,203 @@
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maç Analiz Merkezi</title>
+<style>
+body{background:#0b1220;color:white;font-family:Arial;margin:0;padding:16px}
+h1{color:#35d69a}
+button{background:#159568;color:white;border:0;padding:14px;border-radius:9px;font-weight:bold}
+.card{background:#17243a;border:1px solid #30435f;padding:15px;border-radius:12px;margin:12px 0}
+.muted{color:#aabbd2;font-size:13px}
+.good{color:#35d69a;font-weight:bold}
+.bad{color:#f4c96b}
+</style>
+</head>
+<body>
+<h1>⚽ MAÇ ANALİZ MERKEZİ</h1>
+<p class="muted">Otomatik fikstür ve istatistik analiz sistemi</p>
+<button id="scan" onclick="tara()">MAÇLARI TARA VE ANALİZ ET</button>
+<p id="status" class="muted">Hazır.</p>
+<div id="results"></div>
+
+<script>
+const leagues=[
+["İngiltere Premier Lig","eng.1"],
+["İngiltere Championship","eng.2"],
+["İspanya LaLiga","esp.1"],
+["Almanya Bundesliga","ger.1"],
+["İtalya Serie A","ita.1"],
+["Fransa Ligue 1","fra.1"],
+["Türkiye Süper Lig","tur.1"],
+["Hollanda Eredivisie","ned.1"],
+["Portekiz Liga","por.1"],
+["Şampiyonlar Ligi","uefa.champions"],
+["Avrupa Ligi","uefa.europa"],
+["ABD MLS","usa.1"],
+["Brezilya Serie A","bra.1"],
+["Arjantin Liga","arg.1"]
+];
+
+const api="https://site.api.espn.com/apis/site/v2/sports/soccer/";
+const el=id=>document.getElementById(id);
+
+async function get(url){
+ const r=await fetch(url);
+ if(!r.ok)throw Error("HTTP "+r.status);
+ return r.json();
+}
+
+function getTeams(e){
+ const c=e.competitions?.[0];
+ const t=c?.competitors||[];
+ const h=t.find(x=>x.homeAway==="home");
+ const a=t.find(x=>x.homeAway==="away");
+ if(!h||!a)return null;
+ return {
+  home:h.team.displayName,away:a.team.displayName,
+  homeId:h.team.id,awayId:a.team.id,
+  hs:Number(h.score),as:Number(a.score),
+  date:e.date,state:e.status?.type?.state,
+  status:e.status?.type?.description||""
+ };
+}
+
+function lastFive(teamId,matches){
+ return matches.filter(m=>
+  m.state==="post" &&
+  (m.homeId===teamId||m.awayId===teamId)
+ ).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
+ .map(m=>{
+  const home=m.homeId===teamId;
+  return {
+   scored:home?m.hs:m.as,
+   conceded:home?m.as:m.hs
+  };
+ });
+}
+
+function average(arr){
+ return arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0;
+}
+
+function poisson(lambda,k){
+ let f=1;
+ for(let i=2;i<=k;i++)f*=i;
+ return Math.exp(-lambda)*Math.pow(lambda,k)/f;
+}
+
+function probabilities(h,a){
+ let over15=0,over25=0,btts=0,home15=0,away15=0;
+ let homeWin=0,draw=0,awayWin=0;
+ for(let i=0;i<=7;i++){
+  for(let j=0;j<=7;j++){
+   const p=poisson(h,i)*poisson(a,j);
+   if(i+j>=2)over15+=p;
+   if(i+j>=3)over25+=p;
+   if(i>0&&j>0)btts+=p;
+   if(i>=2)home15+=p;
+   if(j>=2)away15+=p;
+   if(i>j)homeWin+=p;
+   else if(i===j)draw+=p;
+   else awayWin+=p;
+  }
+ }
+ return {over15,over25,btts,home15,away15,homeWin,draw,awayWin};
+}
+
+function prediction(p,yes,no){
+ if(p>=0.60)return yes;
+ if(p<=0.34)return no;
+ return "Belirsiz - güçlü sinyal yok";
+}
+
+function analyze(match,history){
+ const h=lastFive(match.homeId,history);
+ const a=lastFive(match.awayId,history);
+
+ if(h.length<3||a.length<3){
+  return "<p class='bad'>Yeterli geçmiş maç verisi yok. Tahmin üretilmedi.</p>";
+ }
+
+ const homeAttack=average(h.map(x=>x.scored));
+ const homeDefense=average(h.map(x=>x.conceded));
+ const awayAttack=average(a.map(x=>x.scored));
+ const awayDefense=average(a.map(x=>x.conceded));
+
+ const expectedHome=Math.max(.15,(homeAttack+awayDefense)/2*1.10);
+ const expectedAway=Math.max(.15,(awayAttack+homeDefense)/2*.95);
+ const p=probabilities(expectedHome,expectedAway);
+
+ const items=[
+  ["Toplam 1,5 üst",prediction(p.over15,"1,5 üst olur","1,5 üst zayıf")],
+  ["Toplam 2,5 üst",prediction(p.over25,"2,5 üst olur","2,5 üst zayıf")],
+  ["Karşılıklı gol",prediction(p.btts,"İki takım da gol atar","Karşılıklı gol zayıf")],
+  ["Ev sahibi 1,5 gol",prediction(p.home15,"Ev sahibi 1,5 gol atar","Ev sahibi 1,5 gol zor")],
+  ["Deplasman 1,5 gol",prediction(p.away15,"Deplasman 1,5 gol atar","Deplasman 1,5 gol zor")],
+  ["Maç sonucu",prediction(p.homeWin,"Ev sahibi galibiyeti öne çıkıyor",prediction(p.awayWin,"Deplasman galibiyeti öne çıkıyor","Beraberlik veya belirsiz"))]
+ ];
+
+ return `
+ <p class="muted">Son 5 maç: Ev sahibi ${h.length}/5 · Deplasman ${a.length}/5</p>
+ <p class="muted">Gol ortalaması: Ev sahibi ${homeAttack.toFixed(2)} atıyor / ${homeDefense.toFixed(2)} yiyor · Deplasman ${awayAttack.toFixed(2)} atıyor / ${awayDefense.toFixed(2)} yiyor</p>
+ ${items.map(x=>`<p><b>${x[0]}:</b> <span class="good">${x[1]}</span></p>`).join("")}
+ <p class="muted">Model gol beklentisi: ${expectedHome.toFixed(2)} - ${expectedAway.toFixed(2)}</p>
+ <p class="muted">Tahminler istatistiksel model tahminidir, garanti değildir. İlk yarı ve ikinci yarı karşılıklı gol için doğrulanmış yarı skoru verisi gerekir.</p>
+ `;
+}
+
+async function tara(){
+ const button=el("scan");
+ button.disabled=true;
+ el("results").innerHTML="";
+ let fixtures=[],history=[],errors=0;
+ const now=new Date();
+ const end=new Date(now.getTime()+3*86400000);
+ const past=new Date(now.getTime()-90*86400000);
+ const dateCode=d=>d.toISOString().slice(0,10).replaceAll("-","");
+ const range=dateCode(past)+"-"+dateCode(end);
+
+ el("status").textContent="Fikstür ve geçmiş maçlar alınıyor...";
+
+ await Promise.all(leagues.map(async ([name,code])=>{
+  try{
+   const data=await get(api+code+"/scoreboard?dates="+range+"&limit=300");
+   (data.events||[]).forEach(e=>{
+    const m=getTeams(e);
+    if(!m)return;
+    m.league=name;
+    if(m.state==="post")history.push(m);
+    else if(new Date(m.date)>=now&&new Date(m.date)<=end)fixtures.push(m);
+   });
+  }catch(e){errors++}
+ }));
+
+ fixtures.sort((a,b)=>new Date(a.date)-new Date(b.date));
+ el("status").textContent="Analiz yapılıyor...";
+
+ if(!fixtures.length){
+  el("results").innerHTML="<div class='card'>Maç bulunamadı veya veri kaynağına erişilemedi. Daha sonra tekrar dene.</div>";
+ }else{
+  el("results").innerHTML=fixtures.map(m=>{
+   const date=new Date(m.date).toLocaleString("tr-TR");
+   return `<div class="card">
+   <p class="muted">${m.league} · ${date}</p>
+   <h3>${m.home} - ${m.away}</h3>
+   ${analyze(m,history)}
+   </div>`;
+  }).join("");
+ }
+ el("status").textContent=
+ fixtures.length+" maç bulundu · "+history.length+
+ " geçmiş maç incelendi · "+errors+" ligden veri alınamadı.";
+ button.disabled=false;
+}
+</script>
+</body>
+</html>
+
+
+
+
